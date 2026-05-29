@@ -1,0 +1,2 @@
+scenario,thickness_mm,demolition_cost_per_sqm_inr,includes,notes
+"Standard demolition (plaza/promenade, 100-200mm) + debris removal",100-200,380,Breaking + debris carting,Most common scenario for material swap; recommend for accurate BOQ
