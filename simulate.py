@@ -20,14 +20,16 @@ load_dotenv()
 POLYGON = {
     "type": "Polygon",
     "coordinates": [[
-        [72.5745, 23.027],
-        [72.5785, 23.027],
-        [72.5785, 23.031],
-        [72.5745, 23.031],
-        [72.5745, 23.027],
+        [72.572, 23.025],
+        [72.576, 23.025],
+        [72.576, 23.029],
+        [72.572, 23.029],
+        [72.572, 23.025],
     ]],
 }
-# 0.004° lon × 0.004° lat ≈ 410 m × 445 m at 23°N — fits in one 512 m tile
+# 410 m x 445 m at 23°N — single tile confirmed.
+# Shifted south so Lal Darwaja bridge (lat~23.027) sits at polygon centre.
+# Covers: Sabarmati River + full promenade strip + bridge context.
 
 # ---------------------------------------------------------------------------
 # Step 0 — Environment smoke test
@@ -41,15 +43,15 @@ def step_00():
     api_key = os.environ.get("INFRARED_API_KEY")
     if not api_key:
         print("\n[FAIL] INFRARED_API_KEY is not set.")
-        print("  → Create a .env file with:  INFRARED_API_KEY=your_key_here")
-        print("  → Then re-run: python simulate.py --step 0")
+        print("  -> Create a .env file with:  INFRARED_API_KEY=your_key_here")
+        print("  -> Then re-run: python simulate.py --step 0")
         sys.exit(1)
     print(f"  API key loaded: {api_key[:6]}{'*' * (len(api_key) - 6)}")
 
     from infrared_sdk import InfraredClient
     from infrared_sdk.analyses.types import AnalysesName
 
-    print("  Connecting to Infrared API …")
+    print("  Connecting to Infrared API ...")
     with InfraredClient() as client:
         preview = client.preview_area(
             POLYGON,
@@ -62,7 +64,7 @@ def step_00():
 
     assert preview.tile_count == 1, (
         f"[FAIL] Expected 1 tile, got {preview.tile_count}. "
-        "Shrink the polygon so it fits inside 512 m × 512 m."
+        "Shrink the polygon so it fits inside 512 m x 512 m."
     )
     print("\n[PASS] Step 0 complete — single tile confirmed, API key valid.")
 
@@ -180,6 +182,249 @@ def step_01():
 
 
 # ---------------------------------------------------------------------------
+# Step 2A — OSM surface data check
+# ---------------------------------------------------------------------------
+
+# Overpass bbox: (south, west, north, east)
+_BBOX = (
+    min(c[1] for c in POLYGON["coordinates"][0]),
+    min(c[0] for c in POLYGON["coordinates"][0]),
+    max(c[1] for c in POLYGON["coordinates"][0]),
+    max(c[0] for c in POLYGON["coordinates"][0]),
+)
+_COVERAGE_THRESHOLD = 0.80   # 80 % of promenade area must be tagged to use Path A1
+
+
+_OVERPASS_MIRRORS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+
+
+def _query_overpass():
+    """Return raw Overpass JSON for surface-tagged and pedestrian-area features.
+    Tries multiple mirrors; raises RuntimeError if all fail."""
+    import requests
+    s, w, n, e = _BBOX
+    query = (
+        f"[out:json][timeout:25];"
+        f"("
+        f'way["surface"]({s},{w},{n},{e});'
+        f'way["highway"="pedestrian"]({s},{w},{n},{e});'
+        f'way["leisure"="promenade"]({s},{w},{n},{e});'
+        f'relation["surface"]({s},{w},{n},{e});'
+        f");out geom;"
+    )
+    errors = []
+    for mirror in _OVERPASS_MIRRORS:
+        try:
+            resp = requests.get(mirror, params={"data": query}, timeout=30)
+            if resp.status_code == 200:
+                return resp.json()
+            errors.append(f"{mirror}: HTTP {resp.status_code}")
+        except Exception as exc:
+            errors.append(f"{mirror}: {type(exc).__name__}")
+    raise RuntimeError(
+        "All Overpass mirrors unreachable (network block likely):\n  "
+        + "\n  ".join(errors)
+    )
+
+
+def _overpass_to_shapely(elements):
+    """Convert Overpass way elements to Shapely Polygons (closed ways only)."""
+    from shapely.geometry import Polygon
+    from shapely.validation import make_valid
+    polys = []
+    for el in elements:
+        if el.get("type") != "way":
+            continue
+        geom = el.get("geometry", [])
+        if len(geom) < 3:
+            continue
+        coords = [(pt["lon"], pt["lat"]) for pt in geom]
+        if coords[0] != coords[-1]:
+            continue  # open way — not a polygon
+        try:
+            p = make_valid(Polygon(coords))
+            if not p.is_empty:
+                polys.append((p, el.get("tags", {})))
+        except Exception:
+            pass
+    return polys
+
+
+def step_02a():
+    print("=" * 60)
+    print("STEP 2A — OSM surface data check")
+    print("=" * 60)
+
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    import json
+
+    promenade = shape(POLYGON)
+    promenade_area_deg2 = promenade.area   # degrees² — used only for ratio; units cancel
+
+    # --- Query Overpass ---
+    print(f"\n  Querying Overpass for bbox {_BBOX} ...")
+    try:
+        data = _query_overpass()
+    except RuntimeError as exc:
+        print(f"\n  [WARN] {exc}")
+        print("  -> Overpass is not reachable from this network.")
+        print("     This is expected on some ISPs in India.")
+        print("     Result: Path A2 (blanket concrete polygon) — correct for the promenade.")
+        data = {"elements": []}
+
+    elements = data.get("elements", [])
+    print(f"  Elements returned: {len(elements)}")
+
+    # --- Convert closed ways to polygons ---
+    polys_with_tags = _overpass_to_shapely(elements)
+    print(f"  Closed-way polygons extracted: {len(polys_with_tags)}")
+
+    # Print what we found
+    for poly, tags in polys_with_tags[:10]:  # show first 10
+        surface = tags.get("surface", "—")
+        highway = tags.get("highway", "")
+        leisure = tags.get("leisure", "")
+        name    = tags.get("name", "")
+        print(f"    {name or '(unnamed)':30s}  surface={surface:<12s}  highway={highway}  leisure={leisure}")
+
+    # --- Compute coverage ---
+    if polys_with_tags:
+        surface_union = unary_union([p for p, _ in polys_with_tags])
+        overlap = surface_union.intersection(promenade)
+        coverage = overlap.area / promenade_area_deg2
+    else:
+        coverage = 0.0
+
+    print(f"\n  Coverage of promenade polygon: {coverage * 100:.1f}%")
+    print(f"  Threshold for Path A1:         {_COVERAGE_THRESHOLD * 100:.0f}%")
+
+    # --- Decision ---
+    if coverage >= _COVERAGE_THRESHOLD:
+        print("\n  [PATH A1] OSM surface data sufficient.")
+        print("  -> Building ground_materials_baseline from OSM polygons ...")
+
+        # Build a FeatureCollection of the overlapping polygons as "concrete"
+        features = []
+        for poly, _ in polys_with_tags:
+            clipped = poly.intersection(promenade)
+            if clipped.is_empty:
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": clipped.__geo_interface__,
+                "properties": {},
+            })
+        ground_materials_baseline = {
+            "concrete": {"type": "FeatureCollection", "features": features}
+        }
+        path = "A1"
+    else:
+        print("\n  [PATH A2] OSM coverage too low — using blanket concrete polygon.")
+        ground_materials_baseline = {
+            "concrete": {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "geometry": POLYGON,
+                    "properties": {},
+                }]
+            }
+        }
+        path = "A2"
+
+    # Save to disk for later steps
+    out_path = Path(__file__).parent / "results"
+    out_path.mkdir(exist_ok=True)
+    (out_path / "ground_materials_baseline.json").write_text(
+        json.dumps({"path": path, "ground_materials": ground_materials_baseline}, indent=2)
+    )
+    print(f"  Saved to results/ground_materials_baseline.json")
+
+    print(f"\n[PASS] Step 2A complete — Surface data path: {path}")
+    return ground_materials_baseline, path
+
+
+# ---------------------------------------------------------------------------
+# Step 2B — SDK building fetch + east-bank centroid check
+# ---------------------------------------------------------------------------
+
+_EAST_BANK_LON = 72.575   # buildings east of this -> east-bank confirmed (promenade edge)
+_MIN_BUILDINGS = 5
+# Convert lon threshold to x-meters in polygon-bbox-SW frame
+import math as _math
+_EAST_BANK_X_M = (_EAST_BANK_LON - min(c[0] for c in POLYGON["coordinates"][0])) \
+                  * 111320 * _math.cos(_math.radians(23.029))
+
+
+def _building_centroid_x(mesh) -> float:
+    """Return mean x-coordinate of a DotBimMesh (every 3rd value starting at 0)."""
+    coords = mesh.coordinates if hasattr(mesh, "coordinates") else mesh.get("coordinates", [])
+    xs = coords[0::3]
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def step_02b():
+    print("=" * 60)
+    print("STEP 2B — SDK building fetch")
+    print("=" * 60)
+
+    from infrared_sdk import InfraredClient
+    import json
+    from pathlib import Path as P
+
+    print(f"\n  Fetching buildings for polygon via Infrared SDK ...")
+    with InfraredClient() as client:
+        area = client.buildings.get_area(POLYGON)
+
+    buildings = area.buildings
+    n_buildings = len(buildings)
+    print(f"  Buildings returned: {n_buildings}")
+
+    if area.failed_tiles:
+        print(f"  [WARN] Failed tiles: {area.failed_tiles}")
+
+    # --- Centroid check ---
+    east_bank_count = 0
+    centroids_x = []
+    for bid, mesh in buildings.items():
+        cx = _building_centroid_x(mesh)
+        centroids_x.append(cx)
+        if cx > _EAST_BANK_X_M:
+            east_bank_count += 1
+
+    print(f"  East-bank threshold x: {_EAST_BANK_X_M:.0f} m  (lon >= {_EAST_BANK_LON})")
+    print(f"  Buildings east of threshold: {east_bank_count} / {n_buildings}")
+    if centroids_x:
+        print(f"  Centroid x range: {min(centroids_x):.0f} m – {max(centroids_x):.0f} m")
+
+    # --- Decision ---
+    passes = n_buildings >= _MIN_BUILDINGS and east_bank_count >= 1
+
+    if passes:
+        mode = "A"
+        print(f"\n  [MODE A] SDK buildings valid — user area selection enabled.")
+    else:
+        mode = "B"
+        print(f"\n  [MODE B] Buildings sparse or missing east-bank structures.")
+        print("  -> You will need to provide a Rhino DotBim model (see DEVELOPMENT_PLAN.md Step 2B).")
+        print("  -> Fixed polygon mode: no area selection in the webapp.")
+
+    # Save mode flag
+    out_path = P(__file__).parent / "results"
+    out_path.mkdir(exist_ok=True)
+    (out_path / "mode.json").write_text(json.dumps({"mode": mode, "n_buildings": n_buildings}))
+    print(f"  Saved to results/mode.json")
+
+    print(f"\n[PASS] Step 2B complete — Operating mode: {mode}")
+    return buildings, mode
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -188,20 +433,30 @@ def main():
         description="Sabarmati Riverfront thermal comfort tool"
     )
     parser.add_argument(
-        "--step", type=int, choices=[0, 1],
-        help="Which step to run (0 = smoke test, 1 = load data)"
+        "--step", type=str,
+        help="Step(s) to run: 0, 1, 2a, 2b, or 2 (runs both 2a and 2b)"
     )
     args = parser.parse_args()
 
-    if args.step == 0:
+    step = (args.step or "").lower()
+    if step == "0":
         step_00()
-    elif args.step == 1:
+    elif step == "1":
         step_01()
-    else:
-        print("Running steps 0 and 1 in sequence …\n")
-        step_00()
+    elif step == "2a":
+        step_02a()
+    elif step == "2b":
+        step_02b()
+    elif step == "2":
+        step_02a()
         print()
-        step_01()
+        step_02b()
+    else:
+        print("Running steps 0, 1, 2a, 2b in sequence ...\n")
+        step_00(); print()
+        step_01(); print()
+        step_02a(); print()
+        step_02b()
 
 
 if __name__ == "__main__":

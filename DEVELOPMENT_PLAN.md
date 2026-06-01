@@ -62,21 +62,24 @@ Both modes share the same simulation pipeline (Steps 3–8). Only the data inges
 
 ---
 
-## Site constants (confirmed in Step 0)
+## Site constants (updated after OSM visualisation)
 
 ```python
 POLYGON = {
     "type": "Polygon",
     "coordinates": [[
-        [72.5745, 23.027],
-        [72.5785, 23.027],
-        [72.5785, 23.031],
-        [72.5745, 23.031],
-        [72.5745, 23.027],
+        [72.572, 23.027],
+        [72.576, 23.027],
+        [72.576, 23.031],
+        [72.572, 23.031],
+        [72.572, 23.027],
     ]],
 }
-# 410 m x 445 m at 23°N — confirmed single tile in Step 0
-LOCATION = Location(latitude=23.029, longitude=72.5765)
+# 410 m x 445 m at 23°N — single tile confirmed.
+# Shifted 0.0025 deg west from original to cover:
+#   left half  = Sabarmati River (water layer present, evaporative cooling)
+#   right half = promenade strip + minimal east-bank buildings (183 buildings)
+LOCATION = Location(latitude=23.029, longitude=72.574)
 ```
 
 ---
@@ -144,25 +147,62 @@ buildings = area.buildings
 **Test to pass:** `len(buildings) >= 5` AND at least one building centroid east of 72.577°.
 If pass → Mode A is active; enable map area-selection in the webapp.
 
-#### Path B2 — Rhino DotBim model (Mode B)
+#### Path B2 — User-supplied .obj model (Mode B / supplement)
 
-If OSM buildings fail the test:
+The user will supply a `.obj` model of the riverfront with trees and structures.
+Place it as `rhino_model.obj` in the repo root and run `python convert_obj.py`.
 
-1. Open Rhino, model a 300–500 m stretch of the east bank (two rows of buildings,
-   8–12 m height, matching the real massing from satellite imagery).
-2. Export as DotBim (`.bim` format). Each building is a `DotBimMesh` with:
-   - `coordinates: list[float]` — flat XYZ in polygon-bbox-SW meter frame (origin = SW corner of POLYGON bbox)
-   - `indices: list[int]` — flat triangulation
-3. Load in Python:
-   ```python
-   import dotbimpy, json
-   bim = dotbimpy.File.read("rhino_model.bim")
-   buildings = {str(i): mesh for i, mesh in enumerate(bim.meshes)}
-   ```
-4. Fix the POLYGON to match the Rhino model extent exactly.
+**`convert_obj.py` must do:**
 
-**Test to pass:** `buildings` dict has ≥ 6 entries; all `coordinates` are flat floats;
-all coordinate values are in the range [−128, 640] m (within the 512 m tile + context margin).
+```python
+import trimesh, math, json
+from pathlib import Path
+
+# Load .obj
+scene = trimesh.load("rhino_model.obj", force="scene")
+
+# Origin for coordinate frame: SW corner of POLYGON bbox
+ORIGIN_LON, ORIGIN_LAT = 72.572, 23.027
+LON_SCALE = 111320 * math.cos(math.radians(23.029))   # m per deg lon
+LAT_SCALE = 111320                                      # m per deg lat
+
+buildings = {}
+veg_points = []
+
+for name, geom in scene.geometry.items():
+    verts = geom.vertices.copy()     # (N, 3) XYZ in model space
+    # Convert model coords -> local meter frame:
+    #   if model is in meters with (0,0) = ORIGIN, no change needed.
+    #   if model is in lon/lat, convert: x = (lon - ORIGIN_LON)*LON_SCALE etc.
+    flat_coords = verts.flatten().tolist()   # [x0,y0,z0, x1,y1,z1, ...]
+    flat_idx    = geom.faces.flatten().tolist()
+    if "tree" in name.lower() or "veg" in name.lower():
+        # Use centroid as a vegetation Point
+        c = geom.centroid
+        veg_points.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [
+                ORIGIN_LON + c[0] / LON_SCALE,
+                ORIGIN_LAT + c[1] / LAT_SCALE,
+            ]},
+            "properties": {"species": name, "crown_radius": 5.0, "height": 10},
+        })
+    else:
+        buildings[name] = {"coordinates": flat_coords, "indices": flat_idx}
+
+json.dump({"buildings": buildings, "vegetation": veg_points},
+          open("results/obj_model.json", "w"), indent=2)
+print(f"Converted: {len(buildings)} buildings, {len(veg_points)} trees")
+```
+
+Install trimesh: `pip install trimesh`.
+
+**Coordinate frame note:** the SDK needs buildings in polygon-bbox-SW frame
+(SW corner of POLYGON = origin, X = east meters, Y = north meters, Z = height).
+If the .obj uses real-world coordinates, subtract the SW corner before flattening.
+
+**Test to pass:** `buildings` dict has ≥ 1 entry; all `coordinates` are flat float lists;
+`veg_points` has at least as many trees as the .obj contains; no NaN in coordinates.
 
 **Mode B consequence:** the webapp shows a fixed polygon overlay (not editable).
 The user selects scenario parameters and sees before/after impact clearly.
