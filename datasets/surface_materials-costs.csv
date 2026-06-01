@@ -1,6 +1,6 @@
-material,display_name,installation_cost_per_sqm_inr,annual_maintenance_per_sqm_inr,typical_surface_temp_peak_c,albedo,emissivity,utci_reduction_vs_concrete_c,water_requirement_l_sqm_yr,lifespan_years,embodied_carbon_kg_co2e_sqm,notes,cost_10yr_per_sqm_inr
-concrete,Concrete Pavement,1800,200,52,0.35,0.94,0,0,25,220,Current dominant material; high heat absorption; baseline for comparison,3800
-asphalt,Asphalt Pavement,1400,300,58,0.1,0.95,-2,0,15,180,Higher heat island effect than concrete; not recommended for riverfront,4400
-grass,Grass/Turf,350,800,32,0.25,0.98,8,600,5,5,Best UTCI reduction among hard surfaces; needs irrigation; moderate maintenance,8350
-soil,Exposed Soil/Earth,150,100,38,0.2,0.96,5,200,10,2,Good thermal performance; suitable for planted zones; low cost,1150
-water_feature,Water Feature/Reflecting Pool,4500,1200,28,0.06,0.98,12,18000,30,300,Excellent cooling via evaporation; high installation cost; needs water supply,16500
+material,display_name,sdk_key,installation_cost_per_sqm_eur,annual_maintenance_per_sqm_eur,lifespan_years,total_10yr_cost_per_sqm_eur,albedo,emissivity,utci_reduction_vs_concrete_c,notes
+concrete,Light Concrete / Cool Pavement,concrete,55,3,30,85,0.50,0.94,0,High-albedo concrete; baseline material for comparison; common in Barcelona plazas
+asphalt,Standard Asphalt,asphalt,32,4,15,72,0.10,0.95,-2,Dark asphalt; highest heat absorption; increases UHI; avoid in pedestrian zones
+soil,Permeable Soil / Gravel,soil,22,2,20,42,0.20,0.96,5,Permeable sub-base; suitable for tree pits and planted zones; low cost
+vegetation,Grass / Ground Cover,vegetation,28,14,10,168,0.25,0.98,8,Best UTCI reduction; needs irrigation; suited for parks and medians
+water,Water Feature / Canal,water,180,25,25,430,0.06,0.98,12,Excellent cooling via evaporation; high cost; suited for feature plazas
