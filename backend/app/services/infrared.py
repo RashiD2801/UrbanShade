@@ -1,8 +1,10 @@
 """Single file that imports from infrared_sdk. All other files stay decoupled."""
+import csv
 import json
 import math
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 from infrared_sdk import InfraredClient
@@ -15,6 +17,24 @@ from app.settings import get_settings
 log = logging.getLogger(__name__)
 
 VALID_KEYS = {"concrete", "asphalt", "soil", "vegetation", "water"}
+
+_FLOAT_FIELDS = {
+    "canopy_radius_m", "trunk_height_m", "canopy_depth_m",
+    "planting_cost_eur", "annual_maintenance_eur",
+}
+_CSV = Path(__file__).resolve().parents[3] / "datasets" / "tree_species.csv"
+
+
+def _load_tree_species() -> dict:
+    species = {}
+    with open(_CSV, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            entry = {k: (float(v) if k in _FLOAT_FIELDS else v) for k, v in row.items()}
+            species[entry["id"]] = entry
+    return species
+
+
+TREE_SPECIES: dict = _load_tree_species()
 
 # EUR costs: install + demolition
 MATERIAL_COSTS = {
@@ -64,6 +84,21 @@ def _clean_grid(grid) -> list:
         [None if (v is None or (isinstance(v, float) and not math.isfinite(v))) else v for v in row]
         for row in grid
     ]
+
+
+def _tree_canopy_polygon(lon: float, lat: float, radius_m: float, n_pts: int = 20) -> dict:
+    """Approximate a tree canopy as a circular GeoJSON Polygon."""
+    m_per_deg_lat = 111320.0
+    m_per_deg_lon = 111320.0 * math.cos(math.radians(lat))
+    r_lat = radius_m / m_per_deg_lat
+    r_lon = radius_m / m_per_deg_lon
+    coords = [
+        [lon + r_lon * math.cos(2 * math.pi * i / n_pts),
+         lat + r_lat * math.sin(2 * math.pi * i / n_pts)]
+        for i in range(n_pts)
+    ]
+    coords.append(coords[0])
+    return {"type": "Polygon", "coordinates": [coords]}
 
 
 def _polygon_area_m2(geom: dict) -> float:
@@ -216,7 +251,8 @@ def _geom_to_features(geom) -> list:
     return feats
 
 
-def run_scenario(polygon: dict, painted_zones: list, baseline_gm: dict, buildings_data: dict) -> dict:
+def run_scenario(polygon: dict, painted_zones: list, baseline_gm: dict, buildings_data: dict,
+                 tree_placements: list | None = None) -> dict:
     from shapely.geometry import shape
 
     client = _client()
@@ -238,6 +274,42 @@ def run_scenario(polygon: dict, painted_zones: list, baseline_gm: dict, building
     gm = json.loads(json.dumps(baseline_gm))
     total_cost = 0.0
     total_area = 0.0
+    trees_cost = 0.0
+    trees_count = 0
+    trees_area = 0.0
+
+    # ── Convert tree placements to vegetation patches ─────────────────────────
+    for placement in (tree_placements or []):
+        spec = TREE_SPECIES.get(placement["species_id"])
+        if not spec:
+            continue
+        canopy_geom = _tree_canopy_polygon(
+            placement["lon"], placement["lat"], float(spec["canopy_radius_m"])
+        )
+        canopy_shape = shape(canopy_geom)
+
+        for existing_mat in list(gm.keys()):
+            fc = gm[existing_mat]
+            if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
+                continue
+            new_features = []
+            for feat in fc.get("features", []):
+                try:
+                    remainder = shape(feat["geometry"]).difference(canopy_shape)
+                    new_features.extend(_geom_to_features(remainder))
+                except Exception:
+                    new_features.append(feat)
+            gm[existing_mat] = {"type": "FeatureCollection", "features": new_features}
+
+        if "vegetation" not in gm:
+            gm["vegetation"] = {"type": "FeatureCollection", "features": []}
+        gm["vegetation"]["features"].append(
+            {"type": "Feature", "geometry": canopy_geom, "properties": {}}
+        )
+
+        trees_cost += float(spec["planting_cost_eur"])
+        trees_area += math.pi * float(spec["canopy_radius_m"]) ** 2
+        trees_count += 1
 
     for zone in painted_zones:
         mat  = zone["material"]
@@ -291,9 +363,13 @@ def run_scenario(polygon: dict, painted_zones: list, baseline_gm: dict, building
         "min_legend": float(result.min_legend) if result.min_legend is not None else float(np.nanmin(grid)),
         "max_legend": float(result.max_legend) if result.max_legend is not None else float(np.nanmax(grid)),
         "stats": {
-            "mean_utci":     round(float(np.nanmean(grid)), 2),
-            "max_utci":      round(float(np.nanmax(grid)), 2),
-            "cost_eur":      round(total_cost),
-            "area_m2":       round(total_area),
+            "mean_utci":        round(float(np.nanmean(grid)), 2),
+            "max_utci":         round(float(np.nanmax(grid)), 2),
+            "cost_eur":         round(total_cost + trees_cost),
+            "zones_cost_eur":   round(total_cost),
+            "trees_cost_eur":   round(trees_cost),
+            "trees_count":      trees_count,
+            "trees_area_m2":    round(trees_area),
+            "area_m2":          round(total_area),
         },
     }

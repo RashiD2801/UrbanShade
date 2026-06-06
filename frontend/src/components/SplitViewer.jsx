@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import MapboxDraw from '@mapbox/mapbox-gl-draw'
 import { useStore } from '../store.js'
-import { fetchScenario } from '../api.js'
+import { fetchScenario, fetchTreeSpecies } from '../api.js'
 import Sidebar from './Sidebar.jsx'
+import TreePanel from './TreePanel.jsx'
 
 const STYLE      = 'https://tiles.openfreemap.org/styles/liberty'
 const MAT_COLORS = {
@@ -120,13 +121,33 @@ export default function SplitViewer() {
   const setActiveMat   = useStore((s) => s.setActiveMaterial)
   const loading        = useStore((s) => s.loading)
 
-  const [pickerPos, setPickerPos]         = useState(null)
+  // Tree state
+  const treeSpecies          = useStore((s) => s.treeSpecies)
+  const treePlacements       = useStore((s) => s.treePlacements)
+  const activeTreeSpecies    = useStore((s) => s.activeTreeSpecies)
+  const treeMode             = useStore((s) => s.treeMode)
+  const setTreeSpecies       = useStore((s) => s.setTreeSpecies)
+  const setTreeMode          = useStore((s) => s.setTreeMode)
+  const addTreePlacement     = useStore((s) => s.addTreePlacement)
+
+  const [pickerPos, setPickerPos]           = useState(null)
   const [pendingFeature, setPendingFeature] = useState(null)
-  const [showDelta, setShowDelta]         = useState(false)
-  const [isDrawing, setIsDrawing]         = useState(false)
+  const [showDelta, setShowDelta]           = useState(false)
+  const [isDrawing, setIsDrawing]           = useState(false)
+
+  const treeModeRef       = useRef(treeMode)
+  const activeSpeciesRef  = useRef(activeTreeSpecies)
+  const treeSpeciesMapRef = useRef({})
 
   const [w, s, e, n] = baseline?.bounds || [2.163, 41.393, 2.167, 41.397]
   const center = [(w + e) / 2, (s + n) / 2]
+
+  // Keep refs in sync so the map click closure reads fresh values
+  useEffect(() => { treeModeRef.current = treeMode }, [treeMode])
+  useEffect(() => { activeSpeciesRef.current = activeTreeSpecies }, [activeTreeSpecies])
+  useEffect(() => {
+    treeSpeciesMapRef.current = Object.fromEntries(treeSpecies.map((t) => [t.id, t]))
+  }, [treeSpecies])
 
   // ── Init maps ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -188,7 +209,19 @@ export default function SplitViewer() {
       if (e.mode === 'simple_select') setIsDrawing(false)
     })
 
+    // Tree placement: click on left map to place a tree
+    mapL.current.on('click', (e) => {
+      if (!treeModeRef.current || !activeSpeciesRef.current) return
+      const { lng, lat } = e.lngLat
+      addTreePlacement({ id: `${Date.now()}`, species_id: activeSpeciesRef.current, lon: lng, lat })
+    })
+
     return () => { mapL.current?.remove(); mapR.current?.remove() }
+  }, [])
+
+  // ── Load tree species from backend ────────────────────────────────────────
+  useEffect(() => {
+    fetchTreeSpecies().then(setTreeSpecies).catch(console.error)
   }, [])
 
   // ── SDK buildings on both maps ─────────────────────────────────────────────
@@ -260,6 +293,89 @@ export default function SplitViewer() {
     if (mapL.current.isStyleLoaded()) apply(); else mapL.current.once('load', apply)
   }, [paintedZones])
 
+  // ── 3D tree: sphere canopy + trunk on left map ────────────────────────────
+  useEffect(() => {
+    if (!mapL.current) return
+    const speciesMap = treeSpeciesMapRef.current
+
+    function circleCoords(lon, lat, radiusM, n = 20) {
+      const mLat = 111320.0
+      const mLon = 111320.0 * Math.cos(lat * Math.PI / 180)
+      const rLat = radiusM / mLat
+      const rLon = radiusM / mLon
+      const pts = Array.from({ length: n }, (_, i) => {
+        const a = (2 * Math.PI * i) / n
+        return [lon + rLon * Math.cos(a), lat + rLat * Math.sin(a)]
+      })
+      pts.push(pts[0])
+      return pts
+    }
+
+    // Approximate sphere with N horizontal ring slices of varying radius
+    function sphereRings(lon, lat, trunkH, sphereR, n = 10) {
+      const centerZ = trunkH + sphereR
+      const rings = []
+      for (let i = 0; i < n; i++) {
+        const zBase = centerZ - sphereR + (2 * sphereR * i / n)
+        const zTop  = centerZ - sphereR + (2 * sphereR * (i + 1) / n)
+        const t     = ((zBase + zTop) / 2) - centerZ   // distance from centre
+        const ringR = Math.sqrt(Math.max(0, sphereR * sphereR - t * t))
+        if (ringR < 0.1) continue
+        rings.push({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [circleCoords(lon, lat, ringR)] },
+          properties: { z_base: Math.max(0, zBase), z_top: Math.max(0.01, zTop) },
+        })
+      }
+      return rings
+    }
+
+    const sphereFeatures = []
+    const trunkFeatures  = []
+
+    treePlacements.forEach((placement) => {
+      const sp = speciesMap[placement.species_id]
+      if (!sp) return
+      sphereFeatures.push(...sphereRings(placement.lon, placement.lat, sp.trunk_height_m, sp.canopy_radius_m))
+      trunkFeatures.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [circleCoords(placement.lon, placement.lat, 0.35)] },
+        properties: { z_top: sp.trunk_height_m },
+      })
+    })
+
+    const sphereData = { type: 'FeatureCollection', features: sphereFeatures }
+    const trunkData  = { type: 'FeatureCollection', features: trunkFeatures }
+
+    const apply = () => {
+      ;['trees-canopy', 'trees-trunk'].forEach((id) => { if (mapL.current.getLayer(id)) mapL.current.removeLayer(id) })
+      ;['trees-canopy-src', 'trees-trunk-src'].forEach((id) => { if (mapL.current.getSource(id)) mapL.current.removeSource(id) })
+
+      mapL.current.addSource('trees-canopy-src', { type: 'geojson', data: sphereData })
+      mapL.current.addSource('trees-trunk-src',  { type: 'geojson', data: trunkData })
+
+      mapL.current.addLayer({
+        id: 'trees-trunk', type: 'fill-extrusion', source: 'trees-trunk-src',
+        paint: {
+          'fill-extrusion-color':   '#5c3d1e',
+          'fill-extrusion-height':  ['get', 'z_top'],
+          'fill-extrusion-base':    0,
+          'fill-extrusion-opacity': 0.95,
+        },
+      })
+      mapL.current.addLayer({
+        id: 'trees-canopy', type: 'fill-extrusion', source: 'trees-canopy-src',
+        paint: {
+          'fill-extrusion-color':   '#166534',
+          'fill-extrusion-height':  ['get', 'z_top'],
+          'fill-extrusion-base':    ['get', 'z_base'],
+          'fill-extrusion-opacity': 0.82,
+        },
+      })
+    }
+    if (mapL.current.isStyleLoaded()) apply(); else mapL.current.once('load', apply)
+  }, [treePlacements, treeSpecies])
+
   // ── UTCI heatmap on right map ──────────────────────────────────────────────
   useEffect(() => {
     if (!mapR.current || !baseline) return
@@ -318,10 +434,13 @@ export default function SplitViewer() {
   }
 
   async function runScenario() {
-    if (!paintedZones.length) return
+    if (!paintedZones.length && !treePlacements.length) return
     setLoading(true); setError(null)
+    setTreeMode(false)
     try {
-      const data = await fetchScenario(polygon, paintedZones, baseline.ground_materials, baseline.buildings)
+      const data = await fetchScenario(
+        polygon, paintedZones, baseline.ground_materials, baseline.buildings, treePlacements,
+      )
       setScenario(data)
     } catch (err) {
       setError(err.message)
@@ -336,7 +455,7 @@ export default function SplitViewer() {
 
       {/* ── Left map: Surface Materials ── */}
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
-        <div ref={leftEl} style={{ width: '100%', height: '100%' }} />
+        <div ref={leftEl} style={{ width: '100%', height: '100%', cursor: treeMode ? 'crosshair' : 'default' }} />
 
         <div style={labelStyle}>Surface Materials</div>
 
@@ -363,9 +482,20 @@ export default function SplitViewer() {
           </div>
         </div>
 
+        {/* Tree Panel — floats over bottom-left of map */}
+        <div style={{
+          position: 'absolute', bottom: (paintedZones.length > 0 || treePlacements.length > 0) ? 64 : 18,
+          left: 56, zIndex: 20, maxWidth: 240,
+          background: 'rgba(15,23,42,0.92)', borderRadius: 10,
+          padding: '10px 12px', boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+          border: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <TreePanel />
+        </div>
+
         {/* Paint / Cancel button */}
         <div style={{
-          position: 'absolute', bottom: paintedZones.length > 0 ? 64 : 18,
+          position: 'absolute', bottom: (paintedZones.length > 0 || treePlacements.length > 0) ? 64 : 18,
           left: '50%', transform: 'translateX(-50%)',
           display: 'flex', gap: 8, zIndex: 10,
         }}>
@@ -387,14 +517,19 @@ export default function SplitViewer() {
         </div>
 
         {/* Run scenario */}
-        {paintedZones.length > 0 && (
+        {(paintedZones.length > 0 || treePlacements.length > 0) && (
           <button onClick={runScenario} disabled={loading} style={{
             ...actionBtn(loading ? '#94a3b8' : '#16a34a'),
             position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
             zIndex: 10, padding: '10px 22px', fontSize: 14, fontWeight: 700,
             boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
           }}>
-            {loading ? 'Running...' : `Run scenario  (${paintedZones.length} zone${paintedZones.length > 1 ? 's' : ''})`}
+            {loading ? 'Running...' : (() => {
+              const parts = []
+              if (paintedZones.length) parts.push(`${paintedZones.length} zone${paintedZones.length > 1 ? 's' : ''}`)
+              if (treePlacements.length) parts.push(`${treePlacements.length} tree${treePlacements.length > 1 ? 's' : ''}`)
+              return `Run scenario  (${parts.join(', ')})`
+            })()}
           </button>
         )}
 

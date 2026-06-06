@@ -16,10 +16,15 @@ function fmt(n, dec = 1) {
 }
 
 export default function Sidebar() {
-  const baseline     = useStore((s) => s.baseline)
-  const scenario     = useStore((s) => s.scenario)
-  const paintedZones = useStore((s) => s.paintedZones)
-  const clearZones   = useStore((s) => s.clearPaintedZones)
+  const baseline        = useStore((s) => s.baseline)
+  const scenario        = useStore((s) => s.scenario)
+  const paintedZones    = useStore((s) => s.paintedZones)
+  const treePlacements  = useStore((s) => s.treePlacements)
+  const treeSpecies     = useStore((s) => s.treeSpecies)
+  const clearZones      = useStore((s) => s.clearPaintedZones)
+  const clearTrees      = useStore((s) => s.clearTreePlacements)
+
+  const treeSpeciesMap = Object.fromEntries(treeSpecies.map((t) => [t.id, t]))
 
   const delta = scenario && baseline
     ? (scenario.stats.mean_utci - baseline.stats.mean_utci).toFixed(2)
@@ -27,6 +32,11 @@ export default function Sidebar() {
 
   const zoneSummary = paintedZones.reduce((acc, z) => {
     acc[z.material] = (acc[z.material] || 0) + 1
+    return acc
+  }, {})
+
+  const treeSummary = treePlacements.reduce((acc, tp) => {
+    acc[tp.species_id] = (acc[tp.species_id] || 0) + 1
     return acc
   }, {})
 
@@ -67,6 +77,39 @@ export default function Sidebar() {
         </Section>
       )}
 
+      {/* Planted trees */}
+      {treePlacements.length > 0 && (
+        <Section title="Planted trees">
+          {Object.entries(treeSummary).map(([sid, count]) => {
+            const sp = treeSpeciesMap[sid]
+            return (
+              <div key={sid} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                <div style={{ width: 14, height: 14, background: '#166534', borderRadius: 3, border: '1px solid #4ade80' }} />
+                <span style={{ color: '#cbd5e1', fontSize: 12, flex: 1 }}>{sp?.common_name ?? sid}</span>
+                <span style={{ color: '#94a3b8', fontSize: 11 }}>×{count}</span>
+              </div>
+            )
+          })}
+          <div style={{ borderTop: '1px solid #1e293b', marginTop: 6, paddingTop: 6 }}>
+            <Kpi
+              label="Est. planting cost"
+              value={`€ ${treePlacements.reduce((sum, tp) => sum + (treeSpeciesMap[tp.species_id]?.planting_cost_eur ?? 0), 0).toLocaleString()}`}
+            />
+            <Kpi
+              label="Annual maintenance"
+              value={`€ ${treePlacements.reduce((sum, tp) => sum + (treeSpeciesMap[tp.species_id]?.annual_maintenance_eur ?? 0), 0).toLocaleString()}/yr`}
+            />
+          </div>
+          <button onClick={clearTrees} style={{
+            marginTop: 6, width: '100%', background: 'none',
+            border: '1px solid #334155', color: '#94a3b8', borderRadius: 6,
+            padding: '5px 0', cursor: 'pointer', fontSize: 12,
+          }}>
+            Clear all trees
+          </button>
+        </Section>
+      )}
+
       {/* Scenario result */}
       {scenario && (
         <Section title="Scenario result">
@@ -77,8 +120,14 @@ export default function Sidebar() {
             highlight={delta !== null ? (parseFloat(delta) < 0 ? 'green' : parseFloat(delta) > 0 ? 'red' : null) : null}
           />
           <Kpi label="Painted area" value={`${fmt(scenario.stats.area_m2, 0)} m²`} />
+          {scenario.stats.trees_count > 0 && (
+            <Kpi label="Trees placed"    value={`${scenario.stats.trees_count}`} />
+          )}
+          {scenario.stats.trees_cost_eur > 0 && (
+            <Kpi label="Trees cost"      value={`€ ${Number(scenario.stats.trees_cost_eur).toLocaleString()}`} />
+          )}
           <Kpi label="Total cost"   value={`€ ${Number(scenario.stats.cost_eur).toLocaleString()}`} />
-          {scenario.stats.area_m2 > 0 && parseFloat(delta) < 0 && (
+          {parseFloat(delta) < 0 && scenario.stats.cost_eur > 0 && (
             <Kpi
               label="Cost / °C improvement"
               value={`€ ${Math.round(scenario.stats.cost_eur / Math.abs(parseFloat(delta))).toLocaleString()}`}

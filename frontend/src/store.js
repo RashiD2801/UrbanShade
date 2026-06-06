@@ -10,6 +10,12 @@ export const useStore = create((set, get) => ({
   paintedZones: [],      // [{id, material, polygon (GeoJSON Feature)}]
   activeMaterial: 'vegetation',
 
+  // Tree placement state
+  treeSpecies: [],            // loaded from GET /api/trees
+  treePlacements: [],         // [{id, species_id, lon, lat}]
+  activeTreeSpecies: null,    // species_id string or null
+  treeMode: false,            // whether click-to-place is active
+
   loading: false,
   error: null,
 
@@ -26,4 +32,14 @@ export const useStore = create((set, get) => ({
   removePaintedZone: (id) =>
     set((s) => ({ paintedZones: s.paintedZones.filter((z) => z.id !== id) })),
   clearPaintedZones: () => set({ paintedZones: [], scenario: null }),
+
+  // Tree actions
+  setTreeSpecies: (list) => set({ treeSpecies: list }),
+  setActiveTreeSpecies: (id) => set({ activeTreeSpecies: id }),
+  setTreeMode: (v) => set({ treeMode: v }),
+  addTreePlacement: (tp) =>
+    set((s) => ({ treePlacements: [...s.treePlacements, tp] })),
+  removeLastTree: () =>
+    set((s) => ({ treePlacements: s.treePlacements.slice(0, -1) })),
+  clearTreePlacements: () => set({ treePlacements: [], scenario: null }),
 }))

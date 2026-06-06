@@ -42,7 +42,7 @@ If POLYGON changes, re-run `--step 0` to confirm tile_count = 1.
 | Building source | **SDK OSM Mode A** | Good OSM coverage in Barcelona |
 | Material palette | **5 SDK keys only**: concrete, asphalt, soil, vegetation, water | SDK constraint |
 | Costs | **EUR** | Barcelona context |
-| Trees layer | **Not yet** — added later | Scope decision |
+| Trees layer | **12 European species**, click-to-place, canopy as vegetation patch | Barcelona-appropriate species, EUR costs |
 
 ## SDK constraints to never forget
 
@@ -89,9 +89,9 @@ barcelona-heat-tool/
 - [x] Datasets updated to EUR (Barcelona context)
 - [x] simulate.py — steps 0-3 (baseline + scenario pipeline)
 - [x] app.py — Gradio UI with map painter + delta heatmap
+- [x] Trees layer — 12 European species, click-to-place canopy patches, EUR costs
 - [ ] Step 0 smoke test for Barcelona polygon
 - [ ] Baseline UTCI run confirmed
 - [ ] Painter → scenario loop tested end-to-end
 - [ ] scenarios.py — batch material swap runner
 - [ ] scoring.py — EUR/degree improvement metric
-- [ ] Trees layer

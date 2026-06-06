@@ -1,0 +1,13 @@
+id,species,common_name,local_name,canopy_radius_m,trunk_height_m,canopy_depth_m,planting_cost_eur,annual_maintenance_eur,description
+plane_tree,Platanus × hispanica,Plane Tree,Plàtan,9.0,9.0,6.0,1400,280,"Iconic tree lining La Rambla and Passeig de Gràcia. Very large canopy, excellent summer shade."
+tipuana,Tipuana tipu,Tipu Tree,Tipuana,10.0,10.0,7.0,1300,260,"Spreading canopy with yellow flowers. Very common in Barcelona parks and wide avenues."
+jacaranda,Jacaranda mimosifolia,Jacaranda,Jacaranda,6.0,6.0,5.0,950,190,"Iconic purple blooms in spring. Medium canopy, very common in Barcelona neighbourhoods."
+holm_oak,Quercus ilex,Holm Oak,Alzina,6.5,6.5,5.0,1050,200,"Native Mediterranean evergreen oak. Dense, rounded canopy and excellent long-term shade."
+nettle_tree,Celtis australis,Nettle Tree,Lledoner,7.0,7.0,5.0,880,175,"Hardy Mediterranean street tree with broad oval crown. Drought-tolerant and long-lived."
+stone_pine,Pinus pinea,Stone Pine,Pi Pinyer,5.5,6.0,3.0,750,145,"Iconic Mediterranean umbrella pine. Distinctive flat-topped canopy providing dappled shade."
+judas_tree,Cercis siliquastrum,Judas Tree,Arbre de Judea,4.0,4.0,3.0,480,95,"Small ornamental tree with vivid pink spring flowers. Suitable for plazas and narrow streets."
+olive_tree,Olea europaea,Olive Tree,Olivera,4.0,4.0,3.0,520,110,"Ancient Mediterranean symbol. Silver-green evergreen canopy, extremely drought-tolerant."
+persian_lilac,Melia azedarach,Persian Lilac,Cinamom,5.5,5.5,4.0,680,135,"Fast-growing ornamental with fragrant flowers. Common in Barcelona public spaces."
+crape_myrtle,Lagerstroemia indica,Crape Myrtle,Lagerstroèmia,3.0,3.0,3.0,360,75,"Small ornamental tree with showy summer flowers. Ideal for narrow streets and pedestrian areas."
+manna_ash,Fraxinus ornus,Manna Ash,Freixe de Flor,5.0,5.0,4.0,700,140,"Mediterranean native ash with fragrant white spring flowers and a rounded crown."
+indian_laurel,Ficus microcarpa,Indian Laurel,Ficus,7.0,7.0,5.0,900,185,"Dense evergreen canopy. Very common in Barcelona plazas and promenades, excellent year-round shade."
