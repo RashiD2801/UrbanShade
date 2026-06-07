@@ -29,3 +29,4 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+frontend/vite.log
