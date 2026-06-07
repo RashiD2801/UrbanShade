@@ -44,3 +44,47 @@ export async function fetchScenario(polygon, paintedZones, baselineGroundMateria
   if (!res.ok) throw new Error(`Scenario failed: ${res.status}`)
   return res.json()
 }
+
+export async function fetchBestScenario(polygon, baselineGroundMaterials, buildings, baselineMeanUtci, utciGrid = null, utciBounds = null) {
+  const res = await fetch(`${BASE}/api/best-scenario`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      polygon,
+      baseline_ground_materials: baselineGroundMaterials,
+      buildings,
+      baseline_mean_utci: baselineMeanUtci,
+      utci_grid:   utciGrid,
+      utci_bounds: utciBounds,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let detail = `HTTP ${res.status}`
+    try { detail = JSON.parse(text).detail ?? text ?? detail } catch (_) { detail = text || detail }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export async function fetchAutoSimulate(polygon, baselineGroundMaterials, buildings, baselineMeanUtci, utciGrid = null, utciBounds = null) {
+  const res = await fetch(`${BASE}/api/auto-simulate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      polygon,
+      baseline_ground_materials: baselineGroundMaterials,
+      buildings,
+      baseline_mean_utci: baselineMeanUtci,
+      utci_grid:   utciGrid,
+      utci_bounds: utciBounds,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let detail = `HTTP ${res.status}`
+    try { detail = JSON.parse(text).detail ?? text ?? detail } catch (_) { detail = text || detail }
+    throw new Error(detail)
+  }
+  return res.json()
+}

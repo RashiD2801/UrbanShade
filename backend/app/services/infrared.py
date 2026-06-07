@@ -348,6 +348,25 @@ def run_scenario(polygon: dict, painted_zones: list, baseline_gm: dict, building
         c = MATERIAL_COSTS.get(mat, {"install": 50, "demo": 8})
         total_cost += area_m2 * (c["install"] + c["demo"])
 
+    # ── Clean up ground materials before SDK call ─────────────────────────────
+    # Subtraction operations can leave slivers and near-degenerate polygons.
+    # buffer(0) fixes self-intersections; area filter removes tiny slivers.
+    MIN_FEATURE_AREA_DEG2 = 1e-10  # ~1 m² at mid-latitudes
+    for mat_key in list(gm.keys()):
+        fc = gm[mat_key]
+        if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
+            continue
+        cleaned = []
+        for feat in fc.get("features", []):
+            try:
+                g = shape(feat["geometry"]).buffer(0)
+                if not g.is_empty and g.area >= MIN_FEATURE_AREA_DEG2:
+                    from shapely.geometry import mapping as _mapping
+                    cleaned.append({"type": "Feature", "geometry": _mapping(g), "properties": {}})
+            except Exception:
+                cleaned.append(feat)  # keep original if cleanup fails
+        gm[mat_key] = {"type": "FeatureCollection", "features": cleaned}
+
     result = client.run_area_and_wait(
         _make_payload(loc, tp, weather_data), polygon,
         buildings=buildings, ground_materials=gm,
