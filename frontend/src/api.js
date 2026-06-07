@@ -1,4 +1,4 @@
-const BASE = ''  // proxied via vite to localhost:8000
+const BASE = import.meta.env.VITE_API_URL ?? ''  // set VITE_API_URL in production; empty = vite proxy in dev
 
 export async function fetchTreeSpecies() {
   const res = await fetch(`${BASE}/api/trees`)
